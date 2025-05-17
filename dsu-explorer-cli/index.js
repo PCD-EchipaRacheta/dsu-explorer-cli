@@ -1,0 +1,138 @@
+process.env.SSO_SECRETS_ENCRYPTION_KEY = "placeholder";
+require("../opendsu-sdk/builds/output/openDSU");
+const openDSU = require("opendsu")
+const fs = require("fs");
+const path = require("path");
+
+const resolver = openDSU.loadApi("resolver");
+const keySSISpace = openDSU.loadApi("keyssi");
+
+const args = process.argv.slice(2);
+const command = args[0];
+
+switch (command) {
+  case "init-dsu":
+    createDSU(args[1]);
+    break;
+  case "list-dsus":
+    return listDSUs();
+    break;
+  case "help":
+    return showHelp();
+    break;
+  case "ls":
+    const dsuName = args[1];
+    if (!dsuName) {
+        return console.error("Please provide a DSU name. Usage: node index.js ls \"DSU Name\"");
+    }
+    return listFiles(dsuName);
+  default:
+    console.log("Unknown command. Use `help` for more info.");
+    break;
+}
+
+function createDSU(optionalName) {
+  const seedSSI = keySSISpace.createSeedSSI("default");
+
+  resolver.createDSU(seedSSI, (err, dsuInstance) => {
+    if (err) return console.error("Failed to create DSU:", err);
+
+    dsuInstance.beginBatch();
+
+    const content = "This is a new DSU created by CLI.\n";
+    dsuInstance.writeFile("/info.txt", content, (err) => {
+      if (err) return console.error("Failed to write file:", err);
+
+      dsuInstance.commitBatch((err) => {
+        if (err) return console.error("Failed to commit batch:", err);
+
+        dsuInstance.getKeySSIAsString((err, keySSI) => {
+          if (err) return console.error("Failed to get KeySSI:", err);
+
+          fs.writeFileSync(path.join(__dirname, "dsu-keyssi.txt"), keySSI, "utf8");
+
+          // Load existing registry or create new one
+          const registryPath = path.join(__dirname, "dsu-registry.json");
+          let registry = [];
+          if (fs.existsSync(registryPath)) {
+            registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+          }
+
+          // Use provided name or auto-generate one
+          const dsuName = optionalName || `New DSU #${registry.length + 1}`;
+
+          // Add entry to registry
+          const entry = { name: dsuName, keySSI };
+          registry.push(entry);
+          fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf8");
+
+          console.log(`DSU "${dsuName}" created and registered.`);
+          console.log("KeySSI:", keySSI);
+        });
+      });
+    });
+  });
+}
+
+function listDSUs() {
+  const registryPath = path.join(__dirname, "dsu-registry.json");
+
+  if (!fs.existsSync(registryPath)) {
+    return console.log("No DSUs registered yet.");
+  }
+
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  if (registry.length === 0) return console.log("Registry is empty.");
+
+  console.log("Registered DSUs:");
+  registry.forEach((entry, i) => {
+    console.log(`  ${i + 1}. ${entry.name}`);
+    console.log(`     KeySSI: ${entry.keySSI}`);
+  });
+}
+
+function listFiles(name) {
+  const registryPath = path.join(__dirname, "dsu-registry.json");
+
+  if (!fs.existsSync(registryPath)) {
+    return console.error("Registry not found. Please run `init` first.");
+  }
+
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  const dsuEntry = registry.find((entry) => entry.name === name);
+
+  if (!dsuEntry) {
+    return console.error(`DSU "${name}" not found in registry.`);
+  }
+
+  const keySSI = dsuEntry.keySSI;
+
+  resolver.loadDSU(keySSI, (err, dsu) => {
+    if (err) {
+      return console.error("Failed to load DSU:", err);
+    }
+
+    dsu.listFiles("/", { recursive: true }, (err, files) => {
+      if (err) {
+        return console.error("Failed to list files:", err);
+      }
+
+      if (files.length === 0) {
+        console.log("DSU is empty.");
+      } else {
+        console.log(`Files in DSU "${name}":`);
+        files.forEach((file) => console.log(" -", file));
+      }
+    });
+  });
+}
+
+function showHelp() {
+  console.log("\n DSU Explorer CLI - Available Commands:");
+  console.log("  init             Create a new DSU and write info.txt");
+  console.log("  help             Show this help message");
+  console.log("  ls               List all files in the DSU");
+  console.log("  list-dsus        Show all created DSUs from local registry");
+  console.log("\n Make sure 'dsu-keyssi.txt' exists to use 'info'");
+}
+
