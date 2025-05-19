@@ -22,10 +22,45 @@ switch (command) {
     break;
   case "ls":
     const dsuName = args[1];
+    let recursive = false;
+    if(args[2] && args[2] == "-r"){
+      recursive = true;
+    }
     if (!dsuName) {
         return console.error("Please provide a DSU name. Usage: node index.js ls \"DSU Name\"");
     }
-    return listFiles(dsuName);
+    return listFiles(dsuName, recursive);
+  case "touch":
+    const targetDSU = args[1];
+    const targetPath = args[2];
+    const content = args.slice(3).join(" ") || "";
+    if (!targetDSU || !targetPath) {
+      return console.error('Usage: node index.js touch "DSU Name" /file.txt "optional content"');
+    }
+    return writeFileToDSU(targetDSU, targetPath, content);  
+  case "cat":
+    const dsuName1 = args[1];
+    const filePath = args[2];
+    if(!dsuName1 || !filePath) {
+      return console.error('Usage: node index.js cat "DSU Name" /file.txt');
+    }
+    return readFileFromDSU(dsuName1, filePath);
+  case "stat":
+    const targetName = args[1];
+    if (!targetName) {
+      return console.error("Usage: node index.js history \"DSU Name\" [/path/to/file]");
+    }
+    return showStat(targetName);
+  case "rename":
+    const oldName = args[1];
+    const newName = args[2];
+
+    if (!oldName || !newName) {
+      return console.error("Usage: node index.js rename \"Old DSU Name\" \"New DSU Name\"");
+    }
+
+    return renameDSU(oldName, newName);
+
   default:
     console.log("Unknown command. Use `help` for more info.");
     break;
@@ -91,7 +126,7 @@ function listDSUs() {
   });
 }
 
-function listFiles(name) {
+function listFiles(name, recursive) {
   const registryPath = path.join(__dirname, "dsu-registry.json");
 
   if (!fs.existsSync(registryPath)) {
@@ -112,7 +147,7 @@ function listFiles(name) {
       return console.error("Failed to load DSU:", err);
     }
 
-    dsu.listFiles("/", { recursive: true }, (err, files) => {
+    dsu.listFiles("/", { recursive: recursive }, (err, files) => {
       if (err) {
         return console.error("Failed to list files:", err);
       }
@@ -134,5 +169,82 @@ function showHelp() {
   console.log("  ls               List all files in the DSU");
   console.log("  list-dsus        Show all created DSUs from local registry");
   console.log("\n Make sure 'dsu-keyssi.txt' exists to use 'info'");
+}
+
+function writeFileToDSU(dsuName, filePath, content) {
+  const registryPath = path.join(__dirname, "dsu-registry.json");
+
+  console.log(filePath)
+
+  if (!fs.existsSync(registryPath)) {
+    return console.error("Registry file does not exist.");
+  }
+
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  const entry = registry.find(e => e.name === dsuName);
+  if (!entry) return console.error(`DSU "${dsuName}" not found.`);
+
+  resolver.loadDSU(entry.keySSI, (err, dsu) => {
+    if (err) return console.error("Could not load DSU:", err);
+
+    dsu.beginBatch();
+
+    dsu.writeFile(filePath, content, (err) => {
+      if (err) return console.error(`Failed to write file "${filePath}":`, err);
+      console.log(`File "${filePath}" written successfully to DSU "${dsuName}".`);
+      
+      dsu.commitBatch((err) => {
+        if (err) return console.error("Failed to commit batch:", err);
+      });
+    });
+  });
+}
+
+function readFileFromDSU(dsuName, filePath) {
+  const registryPath = path.join(__dirname, "dsu-registry.json");
+
+  if (!fs.existsSync(registryPath)) {
+    return console.error("Registry file does not exist.");
+  }
+
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  const entry = registry.find(e => e.name === dsuName);
+  if (!entry) return console.error(`DSU "${dsuName}" not found.`);
+
+  resolver.loadDSU(entry.keySSI, (err, dsu) => {
+    if (err) return console.error("Could not load DSU:", err);
+
+    dsu.readFile(filePath, (err, content) => {
+      if (err) return console.error(`Could not read file "${filePath}":`, err);
+
+      console.log(`\n--- ${filePath} ---\n${content.toString()}`);
+    });
+  });
+}
+
+function renameDSU(oldName, newName) {
+  const registryPath = path.join(__dirname, "dsu-registry.json");
+
+  if (!fs.existsSync(registryPath)) {
+    return console.error("DSU registry not found.");
+  }
+
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+
+  const existing = registry.find((entry) => entry.name === oldName);
+  const conflict = registry.find((entry) => entry.name === newName);
+
+  if (!existing) {
+    return console.error(`DSU "${oldName}" not found.`);
+  }
+
+  if (conflict) {
+    return console.error(`A DSU with the name "${newName}" already exists.`);
+  }
+
+  existing.name = newName;
+
+  fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf8");
+  console.log(`Renamed "${oldName}" → "${newName}" successfully.`);
 }
 
