@@ -58,6 +58,13 @@ class Registry {
     findByName(name) {
         return this.entries.find(entry => entry.name === name);
     }
+
+    /**
+     * Removes an entry by name.
+     */
+    removeEntry(name) {
+        this.entries = this.entries.filter(entry => entry.name !== name);
+    }
 };
 
 module.exports = Registry;
